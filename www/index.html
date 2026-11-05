@@ -107,6 +107,7 @@ nav button{position:relative}
 /* ================= Base : dates, préférences, langues ================= */
 /* ===== Configuration Firebase : collez ici votre firebaseConfig (console Firebase > Paramètres du projet > Vos applications) ===== */
 const FIREBASE_CONFIG={apiKey:"AIzaSyAWhiDHLdaQ1NYjq9k6Z7TtJ0mkJNbery0",authDomain:"minitere-ecel.firebaseapp.com",projectId:"minitere-ecel",storageBucket:"minitere-ecel.firebasestorage.app",messagingSenderId:"474003875066",appId:"1:474003875066:web:826da669821dd391955543"};
+const APP_BUILD=0;const UPDATE_REPO='phantazio2012-ui/ecel';
 let CLOUD=false,CUID=null,ADM=false;
 const KEY='ecel_data_v1',SESS='ecel_me',PK='ecel_prefs';
 const pad=n=>String(n).padStart(2,'0');
@@ -856,6 +857,7 @@ function renderSet(el){
   <div class="row" style="justify-content:space-between"><span class="mut">A−</span><span class="mut" style="font-size:1.2em">A+</span></div>
   <div class="verse" style="margin:12px 0 4px;font-size:1.1rem">${esc(quote(t('sample_verse')))}</div>
   <button class="ghost" style="margin-top:10px" onclick="P.theme='day';P.fs=100;savePrefs();render()">${t('reset')}</button></div>
+ <div class="card"><h3>🔄 Mises à jour</h3><p class="mut">L'application vérifie automatiquement s'il existe une nouvelle version.</p><div id="updst" class="mut">${APP_BUILD>0?'Version installée : v'+APP_BUILD:'Version de développement'}</div><button class="ghost" style="margin-top:8px" onclick="checkUpdate(true)">Vérifier maintenant</button></div>
  <p class="mut">${t('saved_device')}</p>
  <button class="ghost" onclick="go('admin')">${t('admin_space')}</button>`;
 }
@@ -1124,6 +1126,41 @@ function nativeInit(){
  if(!NAT)return;
  try{if(NAT.App)NAT.App.addListener('backButton',()=>{if(tab!=='home')go('home');else NAT.App.minimizeApp()})}catch(e){}
  nativeSched();
+}
+
+/* ----- mises à jour automatiques (GitHub Releases) ----- */
+const UPK='ecel_upd';
+function openExt(u){try{if(NAT&&NAT.App&&NAT.App.openUrl)return NAT.App.openUrl({url:u})}catch(e){}window.open(u,'_blank')}
+async function checkUpdate(manual){
+ const st=document.getElementById('updst');
+ try{
+  if(!UPDATE_REPO)throw 0;
+  const r=await fetch('https://api.github.com/repos/'+UPDATE_REPO+'/releases/latest',{headers:{Accept:'application/vnd.github+json'}});
+  if(!r.ok)throw 0;
+  const j=await r.json(),n=parseInt(String(j.tag_name||'').replace(/\D/g,''),10)||0;
+  const asset=(j.assets||[]).find(a=>/\.apk$/i.test(a.name)),url=asset?asset.browser_download_url:j.html_url;
+  try{localStorage.setItem(UPK,JSON.stringify({t:Date.now(),n}))}catch(e){}
+  if(n>APP_BUILD&&APP_BUILD>0){
+   let skip=0;try{skip=+localStorage.getItem(UPK+'_skip')||0}catch(e){}
+   if(manual||skip!==n)showUpdate(n,url);
+   if(st)st.textContent='Nouvelle version disponible (v'+n+')';
+  }else if(st)st.textContent=APP_BUILD>0?'Vous avez la dernière version ✔ (v'+APP_BUILD+')':'Version de développement';
+ }catch(e){if(manual&&st)st.textContent='Vérification impossible (connexion ou dépôt non public)'}
+}
+function showUpdate(n,url){
+ if(document.getElementById('updbar'))return;
+ const b=document.createElement('div');b.id='updbar';
+ b.style.cssText='position:fixed;left:10px;right:10px;top:max(10px,env(safe-area-inset-top));z-index:9000;background:#0b4a8a;color:#fff;border:2px solid #ffe600;border-radius:14px;padding:12px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+ b.innerHTML='<b>🔔 Nouvelle version disponible</b><div style="font-size:13px;margin:4px 0 8px;color:#cfe0f7">Une mise à jour de l\'application est prête (v'+n+').</div><div class="row"><button class="btn" id="updgo">Télécharger</button><button class="ghost" id="updno">Plus tard</button></div>';
+ document.body.appendChild(b);
+ document.getElementById('updgo').onclick=()=>{openExt(url);b.remove()};
+ document.getElementById('updno').onclick=()=>{try{localStorage.setItem(UPK+'_skip',String(n))}catch(e){}b.remove()};
+}
+function autoUpdate(){
+ if(!(APP_BUILD>0))return;
+ let last=0;try{last=(JSON.parse(localStorage.getItem(UPK))||{}).t||0}catch(e){}
+ if(Date.now()-last>2*3600*1000)setTimeout(()=>checkUpdate(false),6000);
+ try{if(NAT&&NAT.App)NAT.App.addListener('resume',()=>checkUpdate(false))}catch(e){}
 }
 
 /* ================= Espace administrateur (en français) ================= */
@@ -1471,7 +1508,7 @@ setInterval(()=>{
 },15000);
 
 /* ================= Démarrage ================= */
-applyPrefs();loadLogo();render();cloudStart();nativeInit();
+applyPrefs();loadLogo();render();cloudStart();nativeInit();autoUpdate();
 (function(){const s=document.getElementById('splash');if(!s)return;const en=P.lang==='en';
 document.getElementById('spSub').textContent=en?'You are the Christ, the Son of the living God':'Tu es le Christ, le Fils du Dieu vivant';
 document.getElementById('spVs').textContent=en?'“And ye shall know the truth, and the truth shall make you free.”':'« Vous connaîtrez la vérité, et la vérité vous affranchira. »';

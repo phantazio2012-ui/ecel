@@ -21,8 +21,8 @@ service cloud.firestore {
     // Fiche complète d'un membre : lui-même, ou l'équipe ayant le droit "members"
     match /members/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || staff('members'));
-      allow create: if signedIn() && request.auth.uid == uid
-        && !('roleId' in request.resource.data);
+      allow create: if isAdmin() || (signedIn() && request.auth.uid == uid
+        && !('roleId' in request.resource.data));
       allow update: if signedIn() && (
         isAdmin() ||
         (request.auth.uid == uid &&
@@ -35,8 +35,8 @@ service cloud.firestore {
     // Annuaire (nom seulement) : sert à choisir le destinataire d'un message
     match /directory/{uid} {
       allow read: if signedIn() && (staff('members') || staff('messages'));
-      allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['id','name']);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['id','name']));
       allow delete: if isAdmin();
     }
 
@@ -51,10 +51,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Comptes administrateurs : créés uniquement depuis la console Firebase
+    // Comptes administrateurs : un compte devient administrateur en saisissant
+    // le code d'administration (à changer ci-dessous) ; retrait possible depuis la console.
     match /admins/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['ok', 'code'])
+        && request.resource.data.ok == true
+        && request.resource.data.code == 'ECEL-4827-LIBERE';
+      allow update, delete: if false;
     }
 
     match /news/{id} {

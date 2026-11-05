@@ -55,3 +55,15 @@ firebase apps:create WEB "Ministère ECEL Web"
 firebase apps:sdkconfig WEB          # affiche le firebaseConfig à coller dans www/index.html
 firebase deploy --only firestore:rules
 ```
+
+
+## Mises à jour automatiques et dépôt public
+
+- Dépôt : `phantazio2012-ui/ecel`. Il doit être **public** pour que les fidèles téléchargent l'APK et que l'application lise la dernière version.
+- La clé de signature n'est **plus dans le dépôt**. Elle est dans deux secrets GitHub : `KEYSTORE_B64` (contenu du fichier `keystore.b64.txt`) et `KEYSTORE_PASSWORD` (contenu de `mot-de-passe.txt`).
+  Settings > Secrets and variables > Actions > New repository secret.
+- Conservez `ecel-prod.keystore` et le mot de passe en lieu sûr : sans eux, les futures versions ne pourront pas remplacer l'application installée.
+- À chaque compilation, le numéro de version (numéro d'exécution) est écrit dans l'application. Elle compare ce numéro à la dernière version publiée dans Releases et affiche « Nouvelle version disponible ».
+- Nouvelles empreintes (si Firebase les demande) :
+  SHA-1 : 94:4B:88:46:CC:EC:B9:08:CB:85:05:5A:D4:41:42:AD:76:72:8F:8F
+  SHA-256 : 15:7D:68:2F:71:41:B0:1C:8E:B7:A8:F8:7A:CE:2A:CC:6F:F1:58:49:DC:D9:31:16:0B:8F:57:E8:85:1E:4E:2A
