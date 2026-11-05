@@ -1,0 +1,89 @@
+name: Construire l'APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Créer le projet Android
+        run: npx cap add android
+
+      - name: Configuration Firebase Android (google-services.json)
+        run: |
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "google-services.json ajouté"; else echo "google-services.json absent (facultatif)"; fi
+
+      - name: Icônes et écran de démarrage
+        run: npx capacitor-assets generate --android
+
+      - name: Autorisations (notifications et alarmes)
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <application#' "$M"
+
+      - name: Signature de l'application
+        run: |
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  ecel {
+                      storeFile file('../../ecel.keystore')
+                      storePassword 'ecelapp2026'
+                      keyAlias 'ecel'
+                      keyPassword 'ecelapp2026'
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.ecel
+                      minifyEnabled false
+                  }
+                  debug {
+                      signingConfig signingConfigs.ecel
+                  }
+              }
+          }
+          GRADLE
+
+      - name: Synchroniser et compiler
+        run: |
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Renommer l'APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk Ministere-ECEL.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ministere-ECEL-apk
+          path: Ministere-ECEL.apk
+
+      - name: Publier une version téléchargeable
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Ministère ECEL ${{ github.run_number }}
+          files: Ministere-ECEL.apk
