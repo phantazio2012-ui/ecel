@@ -1,0 +1,8 @@
+{
+  "appId": "ci.ecel.ministere",
+  "appName": "Ministère ECEL",
+  "webDir": "www",
+  "backgroundColor": "#05295a",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false }
+}
