@@ -1,0 +1,4 @@
+CLÉ DE SIGNATURE — À GARDER PRIVÉE (ne jamais la mettre dans GitHub)
+1. keystore.b64.txt  -> à copier dans le secret GitHub  KEYSTORE_B64
+2. mot-de-passe.txt  -> à copier dans le secret GitHub  KEYSTORE_PASSWORD
+3. ecel-prod.keystore -> sauvegarde à conserver en lieu sûr (clé, disque, e-mail personnel)
