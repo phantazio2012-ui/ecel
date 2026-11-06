@@ -30,7 +30,6 @@ jobs:
         run: npx cap add android
 
       - name: Configuration Firebase Android (google-services.json)
-
         run: |
           if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "google-services.json ajouté"; else echo "google-services.json absent (facultatif)"; fi
 
@@ -52,6 +51,14 @@ jobs:
           if [ -z "$KS" ]; then echo "Secret KEYSTORE_B64 manquant (voir LISEZ-MOI)"; exit 1; fi
           echo "$KS" | base64 -d > "$GITHUB_WORKSPACE/ecel.keystore"
 
+      - name: Vérifier la clé de signature
+        env:
+          KSP: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          PW="$(printf '%s' "$KSP" | tr -d '[:space:]')"
+          echo "Longueur du mot de passe reçu : ${#PW} caractères (attendu : 20)"
+          if keytool -list -keystore "$GITHUB_WORKSPACE/ecel.keystore" -storepass "$PW" -alias ecel > /dev/null 2>&1; then echo "Clé et mot de passe OK"; else echo "ERREUR : le secret KEYSTORE_PASSWORD ne correspond pas à la clé. Recréez-le avec les 20 caractères de mot-de-passe.txt"; exit 1; fi
+
       - name: Signature de l'application
         run: |
           cat >> android/app/build.gradle <<'GRADLE'
@@ -63,7 +70,6 @@ jobs:
                       storePassword System.getenv('KS_PASS')
                       keyAlias 'ecel'
                       keyPassword System.getenv('KS_PASS')
-
                   }
               }
               buildTypes {
@@ -96,7 +102,6 @@ jobs:
         with:
           name: Ministere-ECEL-apk
           path: Ministere-ECEL.apk
-
 
       - name: Publier une version téléchargeable
         uses: softprops/action-gh-release@v2
