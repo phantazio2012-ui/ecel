@@ -81,8 +81,9 @@ jobs:
       - name: Synchroniser et compiler
         env:
           KS_FILE: ${{ github.workspace }}/ecel.keystore
-          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KSP: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
+          export KS_PASS="$(printf '%s' "$KSP" | tr -d '[:space:]')"
           npx cap sync android
           cd android
           chmod +x gradlew
