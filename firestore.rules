@@ -73,8 +73,31 @@ service cloud.firestore {
         allow delete: if signedIn() &&
           (resource.data.mid == request.auth.uid || staff('redaction'));
       }
+      match /likes/{uid} {
+        allow read: if true;
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.mid == request.auth.uid;
+        allow delete: if signedIn() && (request.auth.uid == uid || staff('redaction'));
+      }
     }
-    match /teachings/{id}     { allow read: if true; allow write: if staff('teach'); }
+    match /teachings/{id} {
+      allow read: if true;
+      allow write: if staff('teach');
+      match /comments/{cid} {
+        allow read: if true;
+        allow create: if signedIn() && request.resource.data.mid == request.auth.uid;
+        allow update: if signedIn() && resource.data.mid == request.auth.uid
+          && request.resource.data.mid == request.auth.uid;
+        allow delete: if signedIn() &&
+          (resource.data.mid == request.auth.uid || staff('teach'));
+      }
+      match /likes/{uid} {
+        allow read: if true;
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.mid == request.auth.uid;
+        allow delete: if signedIn() && (request.auth.uid == uid || staff('teach'));
+      }
+    }
     match /prayers/{id}       { allow read: if true; allow write: if staff('prayers'); }
     match /schedule/{id}      { allow read: if true; allow write: if staff('schedule'); }
     match /dayVerses/{id}     { allow read: if true; allow write: if staff('verset'); }
