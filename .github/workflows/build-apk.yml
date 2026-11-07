@@ -44,21 +44,6 @@ jobs:
       - name: Numéro de version (détection des mises à jour)
         run: sed -i "s/const APP_BUILD=0;/const APP_BUILD=${{ github.run_number }};/" www/index.html
 
-      - name: Clé de signature (secret GitHub)
-        env:
-          KS: ${{ secrets.KEYSTORE_B64 }}
-        run: |
-          if [ -z "$KS" ]; then echo "Secret KEYSTORE_B64 manquant (voir LISEZ-MOI)"; exit 1; fi
-          echo "$KS" | base64 -d > "$GITHUB_WORKSPACE/ecel.keystore"
-
-      - name: Vérifier la clé de signature
-        env:
-          KSP: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-          PW="$(printf '%s' "$KSP" | tr -d '[:space:]')"
-          echo "Longueur du mot de passe reçu : ${#PW} caractères (attendu : 20)"
-          if keytool -list -keystore "$GITHUB_WORKSPACE/ecel.keystore" -storepass "$PW" -alias ecel > /dev/null 2>&1; then echo "Clé et mot de passe OK"; else echo "ERREUR : le secret KEYSTORE_PASSWORD ne correspond pas à la clé. Recréez-le avec les 20 caractères de mot-de-passe.txt"; exit 1; fi
-
       - name: Signature de l'application
         run: |
           cat >> android/app/build.gradle <<'GRADLE'
@@ -86,10 +71,9 @@ jobs:
 
       - name: Synchroniser et compiler
         env:
-          KS_FILE: ${{ github.workspace }}/ecel.keystore
-          KSP: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_FILE: ${{ github.workspace }}/ecel-prod.keystore
+          KS_PASS: YcZ66rzAb46ScSr2Gq4E
         run: |
-          export KS_PASS="$(printf '%s' "$KSP" | tr -d '[:space:]')"
           npx cap sync android
           cd android
           chmod +x gradlew
