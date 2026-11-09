@@ -39,7 +39,7 @@ jobs:
       - name: Autorisations (notifications et alarmes)
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>\n    <application#' "$M"
+          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>\n    <application#' "$M"
 
       - name: Sonnerie d'alarme de prière
         run: |
@@ -59,6 +59,118 @@ jobs:
           w=wave.open('android/app/src/main/res/raw/alarm_ecel.wav','wb');w.setnchannels(1);w.setsampwidth(2);w.setframerate(sr)
           w.writeframes(b''.join(struct.pack('<h',x) for x in fr));w.close()
           PY
+
+      - name: Installation automatique des mises à jour (module natif)
+        run: |
+          D=android/app/src/main/java/ci/ecel/ministere
+          mkdir -p "$D" android/app/src/main/res/xml
+          cat > "$D/ApkInstaller.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.Settings;
+          import androidx.core.content.FileProvider;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+
+          @CapacitorPlugin(name = "ApkInstaller")
+          public class ApkInstaller extends Plugin {
+
+              private boolean allowed() {
+                  Context c = getContext();
+                  return Build.VERSION.SDK_INT < 26 || c.getPackageManager().canRequestPackageInstalls();
+              }
+
+              @PluginMethod
+              public void install(final PluginCall call) {
+                  final String link = call.getString("url");
+                  if (link == null) { call.reject("url manquante"); return; }
+                  if (!allowed()) {
+                      try {
+                          Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+                          i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                          getContext().startActivity(i);
+                      } catch (Exception e) { }
+                      call.reject("perm", "perm");
+                      return;
+                  }
+                  new Thread(new Runnable() {
+                      public void run() {
+                          try {
+                              File f = new File(getContext().getCacheDir(), "update.apk");
+                              HttpURLConnection h = (HttpURLConnection) new URL(link).openConnection();
+                              h.setInstanceFollowRedirects(true);
+                              h.setConnectTimeout(20000);
+                              h.setReadTimeout(30000);
+                              int code = h.getResponseCode();
+                              if (code != 200) throw new Exception("HTTP " + code);
+                              long total = h.getContentLengthLong();
+                              InputStream in = h.getInputStream();
+                              FileOutputStream out = new FileOutputStream(f);
+                              byte[] buf = new byte[32768];
+                              long done = 0;
+                              int last = -1, n;
+                              while ((n = in.read(buf)) > 0) {
+                                  out.write(buf, 0, n);
+                                  done += n;
+                                  int pct = total > 0 ? (int) (done * 100 / total) : 0;
+                                  if (pct != last) {
+                                      last = pct;
+                                      JSObject o = new JSObject();
+                                      o.put("pct", pct);
+                                      notifyListeners("progress", o);
+                                  }
+                              }
+                              out.close();
+                              in.close();
+                              Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+                              Intent i = new Intent(Intent.ACTION_VIEW);
+                              i.setDataAndType(uri, "application/vnd.android.package-archive");
+                              i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                              getContext().startActivity(i);
+                              call.resolve();
+                          } catch (Exception e) {
+                              call.reject(String.valueOf(e.getMessage()));
+                          }
+                      }
+                  }).start();
+              }
+          }
+          JAVA_EOF
+          cat > "$D/MainActivity.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(ApkInstaller.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA_EOF
+          cat > android/app/src/main/res/xml/file_paths.xml <<'XML_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths xmlns:android="http://schemas.android.com/apk/res/android">
+              <cache-path name="cache" path="." />
+              <files-path name="files" path="." />
+              <external-path name="ext" path="." />
+          </paths>
+          XML_EOF
+          ls -R "$D"
 
       - name: Numéro de version Android (mise à jour sans désinstaller)
         run: |
