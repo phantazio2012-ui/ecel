@@ -60,7 +60,7 @@ jobs:
           w.writeframes(b''.join(struct.pack('<h',x) for x in fr));w.close()
           PY
 
-      - name: Installation automatique des mises à jour (module natif)
+      - name: Modules natifs (installation APK + mise à jour du contenu)
         run: |
           D=android/app/src/main/java/ci/ecel/ministere
           mkdir -p "$D" android/app/src/main/res/xml
@@ -78,7 +78,13 @@ jobs:
           import com.getcapacitor.PluginCall;
           import com.getcapacitor.PluginMethod;
           import com.getcapacitor.annotation.CapacitorPlugin;
+          import android.content.SharedPreferences;
+          import android.content.res.AssetManager;
+          import java.io.ByteArrayOutputStream;
           import java.io.File;
+          import java.io.IOException;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
           import java.io.FileOutputStream;
           import java.io.InputStream;
           import java.net.HttpURLConnection;
@@ -146,17 +152,134 @@ jobs:
                       }
                   }).start();
               }
+
+              // ---------- mise à jour du contenu (sans réinstaller l'APK) ----------
+              private static final String PREFS = "CapWebViewSettings";
+
+              private HttpURLConnection open(String link, boolean head) throws IOException {
+                  HttpURLConnection h = (HttpURLConnection) new URL(link).openConnection();
+                  h.setInstanceFollowRedirects(true);
+                  h.setConnectTimeout(15000);
+                  h.setReadTimeout(30000);
+                  if (head) h.setRequestProperty("Range", "bytes=0-7999");
+                  return h;
+              }
+
+              private void copyAssets(AssetManager am, String from, File to) throws IOException {
+                  String[] list = am.list(from);
+                  if (list != null && list.length > 0) {
+                      to.mkdirs();
+                      for (String n : list) copyAssets(am, from + "/" + n, new File(to, n));
+                  } else {
+                      InputStream in = am.open(from);
+                      FileOutputStream out = new FileOutputStream(to);
+                      byte[] b = new byte[32768];
+                      int n;
+                      while ((n = in.read(b)) > 0) out.write(b, 0, n);
+                      out.close();
+                      in.close();
+                  }
+              }
+
+              private void rmrf(File f) {
+                  File[] l = f.listFiles();
+                  if (l != null) for (File c : l) rmrf(c);
+                  f.delete();
+              }
+
+              @PluginMethod
+              public void webUpdate(final PluginCall call) {
+                  final String link = call.getString("url");
+                  final String cur = call.getString("ver", "0");
+                  final String build = call.getString("build", "0");
+                  if (link == null) { call.reject("url manquante"); return; }
+                  new Thread(new Runnable() {
+                      public void run() {
+                          try {
+                              HttpURLConnection h = open(link, true);
+                              int code = h.getResponseCode();
+                              if (code != 200 && code != 206) throw new Exception("HTTP " + code);
+                              InputStream in = h.getInputStream();
+                              byte[] hb = new byte[8000];
+                              int got = 0, r;
+                              while (got < hb.length && (r = in.read(hb, got, hb.length - got)) > 0) got += r;
+                              h.disconnect();
+                              String head = new String(hb, 0, got, "UTF-8");
+                              Matcher mv = Pattern.compile("WEBVER:(\\d+)").matcher(head);
+                              Matcher mn = Pattern.compile("NATIVE:(\\d+)").matcher(head);
+                              if (!mv.find()) throw new Exception("version introuvable");
+                              String rv = mv.group(1);
+                              int rn = mn.find() ? Integer.parseInt(mn.group(1)) : 0;
+                              JSObject res = new JSObject();
+                              res.put("native", rn);
+                              res.put("ver", rv);
+                              if (Long.parseLong(rv) <= Long.parseLong(cur)) {
+                                  res.put("status", "same");
+                                  call.resolve(res);
+                                  return;
+                              }
+                              HttpURLConnection d = open(link, false);
+                              if (d.getResponseCode() != 200) throw new Exception("HTTP " + d.getResponseCode());
+                              InputStream di = d.getInputStream();
+                              ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                              byte[] buf = new byte[65536];
+                              int n;
+                              while ((n = di.read(buf)) > 0) bo.write(buf, 0, n);
+                              di.close();
+                              String html = bo.toString("UTF-8");
+                              if (html.length() < 500000 || !html.contains("WEBVER:" + rv)) throw new Exception("fichier invalide");
+                              html = html.replace("const APP_BUILD=0;", "const APP_BUILD=" + build + ";");
+                              File root = new File(getContext().getFilesDir(), "ota");
+                              File dir = new File(root, rv);
+                              rmrf(root);
+                              copyAssets(getContext().getAssets(), "public", dir);
+                              FileOutputStream fo = new FileOutputStream(new File(dir, "index.html"));
+                              fo.write(html.getBytes("UTF-8"));
+                              fo.close();
+                              SharedPreferences.Editor ed = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+                              ed.putString("serverBasePath", dir.getAbsolutePath());
+                              ed.putBoolean("ota_pending", true);
+                              ed.apply();
+                              res.put("status", "updated");
+                              call.resolve(res);
+                          } catch (Exception e) {
+                              call.reject(String.valueOf(e.getMessage()));
+                          }
+                      }
+                  }).start();
+              }
+
+              @PluginMethod
+              public void webApply(PluginCall call) {
+                  String p = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("serverBasePath", "");
+                  if (p == null || p.isEmpty() || !new File(p).exists()) { call.reject("aucune mise à jour"); return; }
+                  call.resolve();
+                  getBridge().setServerBasePath(p);
+              }
+
+              @PluginMethod
+              public void webOk(PluginCall call) {
+                  getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ota_pending", false).apply();
+                  call.resolve();
+              }
           }
           JAVA_EOF
           cat > "$D/MainActivity.java" <<'JAVA_EOF'
           package ci.ecel.ministere;
 
+          import android.content.Context;
+          import android.content.SharedPreferences;
           import android.os.Bundle;
           import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
               @Override
               public void onCreate(Bundle savedInstanceState) {
+                  // Si la dernière mise à jour de contenu n'a pas démarré correctement, on revient à la version de l'APK
+                  SharedPreferences p = getSharedPreferences("CapWebViewSettings", Context.MODE_PRIVATE);
+                  if (p.getBoolean("ota_pending", false)) {
+                      p.edit().putString("serverBasePath", "").putBoolean("ota_pending", false).apply();
+                  }
                   registerPlugin(ApkInstaller.class);
                   super.onCreate(savedInstanceState);
               }
