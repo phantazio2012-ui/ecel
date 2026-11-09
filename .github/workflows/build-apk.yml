@@ -39,7 +39,32 @@ jobs:
       - name: Autorisations (notifications et alarmes)
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <application#' "$M"
+          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>\n    <application#' "$M"
+
+      - name: Sonnerie d'alarme de prière
+        run: |
+          mkdir -p android/app/src/main/res/raw
+          python3 - <<'PY'
+          import wave,struct,math
+          sr=22050;fr=[]
+          def tone(f,d,v=0.6):
+              n=int(sr*d)
+              for i in range(n):
+                  e=min(1,i/400)*math.exp(-3.2*i/n)
+                  fr.append(int(32000*v*e*(math.sin(2*math.pi*f*i/sr)+0.4*math.sin(4*math.pi*f*i/sr))/1.4))
+          def gap(d): fr.extend([0]*int(sr*d))
+          for _ in range(4):
+              for f in (659,784,988,1319): tone(f,0.45)
+              gap(0.6)
+          w=wave.open('android/app/src/main/res/raw/alarm_ecel.wav','wb');w.setnchannels(1);w.setsampwidth(2);w.setframerate(sr)
+          w.writeframes(b''.join(struct.pack('<h',x) for x in fr));w.close()
+          PY
+
+      - name: Numéro de version Android (mise à jour sans désinstaller)
+        run: |
+          G=android/app/build.gradle
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/; s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" "$G"
+          grep -n "versionCode\|versionName" "$G"
 
       - name: Numéro de version (détection des mises à jour)
         run: sed -i "s/const APP_BUILD=0;/const APP_BUILD=${{ github.run_number }};/" www/index.html
