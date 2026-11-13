@@ -17,14 +17,23 @@ service cloud.firestore {
         && (p in get(/databases/$(database)/documents/roles/$(myDoc().roleId)).data.perms);
     }
     function staff(p) { return isAdmin() || hasPerm(p); }
+    // Membre bloqué par l'administration : ne peut plus commenter, aimer ni écrire
+    function notBlocked() {
+      return signedIn() && !(exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && myDoc().get('blocked', false) == true);
+    }
 
     // Fiche complète d'un membre : lui-même, ou l'équipe ayant le droit "members"
     match /members/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || staff('members'));
+      allow read: if signedIn() && (request.auth.uid == uid || staff('members') || staff('membersdb'));
       allow create: if isAdmin() || (signedIn() && request.auth.uid == uid
         && !('roleId' in request.resource.data));
       allow update: if signedIn() && (
         isAdmin() ||
+        (staff('membersedit') &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+           ['name','phone','email','city','birth','gender','marital','kids',
+            'job','area','baptized','dept','blocked'])) ||
         (request.auth.uid == uid &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(
            ['name','phone','email','city','birth','gender','marital','kids',
@@ -68,15 +77,15 @@ service cloud.firestore {
       allow write: if staff('redaction');
       match /comments/{cid} {
         allow read: if true;
-        allow create: if signedIn() && request.resource.data.mid == request.auth.uid;
+        allow create: if notBlocked() && request.resource.data.mid == request.auth.uid;
         allow update: if signedIn() && resource.data.mid == request.auth.uid
           && request.resource.data.mid == request.auth.uid;
         allow delete: if signedIn() &&
-          (resource.data.mid == request.auth.uid || staff('redaction'));
+          (resource.data.mid == request.auth.uid || staff('redaction') || staff('members'));
       }
       match /likes/{uid} {
         allow read: if true;
-        allow create: if signedIn() && request.auth.uid == uid
+        allow create: if notBlocked() && request.auth.uid == uid
           && request.resource.data.mid == request.auth.uid;
         allow delete: if signedIn() && (request.auth.uid == uid || staff('redaction'));
       }
@@ -86,23 +95,43 @@ service cloud.firestore {
       allow write: if staff('teach');
       match /comments/{cid} {
         allow read: if true;
-        allow create: if signedIn() && request.resource.data.mid == request.auth.uid;
+        allow create: if notBlocked() && request.resource.data.mid == request.auth.uid;
         allow update: if signedIn() && resource.data.mid == request.auth.uid
           && request.resource.data.mid == request.auth.uid;
         allow delete: if signedIn() &&
-          (resource.data.mid == request.auth.uid || staff('teach'));
+          (resource.data.mid == request.auth.uid || staff('teach') || staff('members'));
       }
       match /likes/{uid} {
         allow read: if true;
-        allow create: if signedIn() && request.auth.uid == uid
+        allow create: if notBlocked() && request.auth.uid == uid
           && request.resource.data.mid == request.auth.uid;
         allow delete: if signedIn() && (request.auth.uid == uid || staff('teach'));
       }
     }
+    // J'aime et commentaires des prières du jour (matin « m… » / soir « e… »)
+    match /prayerDays/{pid}/comments/{cid} {
+      allow read: if true;
+      allow create: if notBlocked() && request.resource.data.mid == request.auth.uid;
+      allow update: if signedIn() && resource.data.mid == request.auth.uid
+        && request.resource.data.mid == request.auth.uid;
+      allow delete: if signedIn() &&
+        (resource.data.mid == request.auth.uid || staff('prayers') || staff('members'));
+    }
+    match /prayerDays/{pid}/likes/{uid} {
+      allow read: if true;
+      allow create: if notBlocked() && request.auth.uid == uid
+        && request.resource.data.mid == request.auth.uid;
+      allow delete: if signedIn() && (request.auth.uid == uid || staff('prayers'));
+    }
+    // Signalements de commentaires : tout membre peut signaler, l'équipe « membres » les traite
+    match /reports/{id} {
+      allow create: if notBlocked() && request.resource.data.by == request.auth.uid;
+      allow read, update, delete: if staff('members');
+    }
     match /prayers/{id}       { allow read: if true; allow write: if staff('prayers'); }
     match /schedule/{id}      { allow read: if true; allow write: if staff('schedule'); }
-    // Dîmes et cotisations : réservé à l'équipe ayant le droit « finance »
-    match /finance/{id}       { allow read, write: if staff('finance'); }
+    // Dîmes et cotisations : réservé au titulaire du rôle ayant le droit « finance » (même l'administrateur général n'y accède pas)
+    match /finance/{id}       { allow read, write: if hasPerm('finance'); }
     match /dayVerses/{id}     { allow read: if true; allow write: if staff('verset'); }
     match /verseRotation/{id} { allow read: if true; allow write: if staff('verset'); }
     match /verseImages/{id}   { allow read: if true; allow write: if staff('verset'); }
@@ -117,7 +146,7 @@ service cloud.firestore {
         isAdmin());
       // Tout membre peut écrire à un membre de l'équipe ou à un autre membre inscrit ;
       // l'équipe autorisée peut aussi écrire à tous
-      allow create: if signedIn() && request.resource.data.fromId == request.auth.uid
+      allow create: if notBlocked() && request.resource.data.fromId == request.auth.uid
         && request.resource.data.text.size() <= 3000
         && (staff('messages') ||
             exists(/databases/$(database)/documents/staff/$(request.resource.data.to)) ||

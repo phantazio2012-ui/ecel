@@ -1,0 +1,657 @@
+name: Construire l'APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Créer le projet Android
+        run: npx cap add android
+
+      - name: Configuration Firebase Android (google-services.json)
+        run: |
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "google-services.json ajouté"; else echo "google-services.json absent (facultatif)"; fi
+
+      - name: Icônes et écran de démarrage
+        run: npx capacitor-assets generate --android
+
+      - name: Autorisations (notifications et alarmes)
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>\n    <application#' "$M"
+
+      - name: Sonnerie d'alarme de prière
+        run: |
+          mkdir -p android/app/src/main/res/raw
+          python3 - <<'PY'
+          import wave,struct,math
+          sr=22050;fr=[]
+          def tone(f,d,v=0.6):
+              n=int(sr*d)
+              for i in range(n):
+                  e=min(1,i/400)*math.exp(-3.2*i/n)
+                  fr.append(int(32000*v*e*(math.sin(2*math.pi*f*i/sr)+0.4*math.sin(4*math.pi*f*i/sr))/1.4))
+          def gap(d): fr.extend([0]*int(sr*d))
+          for _ in range(4):
+              for f in (659,784,988,1319): tone(f,0.45)
+              gap(0.6)
+          w=wave.open('android/app/src/main/res/raw/alarm_ecel.wav','wb');w.setnchannels(1);w.setsampwidth(2);w.setframerate(sr)
+          w.writeframes(b''.join(struct.pack('<h',x) for x in fr));w.close()
+          PY
+
+      - name: Modules natifs (installation APK, mise à jour du contenu, notifications)
+        run: |
+          D=android/app/src/main/java/ci/ecel/ministere
+          mkdir -p "$D" android/app/src/main/res/xml
+          cat > "$D/ApkInstaller.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.Settings;
+          import androidx.core.content.FileProvider;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import android.content.SharedPreferences;
+          import android.content.res.AssetManager;
+          import java.io.ByteArrayOutputStream;
+          import java.io.File;
+          import java.io.IOException;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+
+          @CapacitorPlugin(name = "ApkInstaller")
+          public class ApkInstaller extends Plugin {
+
+              private boolean allowed() {
+                  Context c = getContext();
+                  return Build.VERSION.SDK_INT < 26 || c.getPackageManager().canRequestPackageInstalls();
+              }
+
+              @PluginMethod
+              public void install(final PluginCall call) {
+                  final String link = call.getString("url");
+                  if (link == null) { call.reject("url manquante"); return; }
+                  if (!allowed()) {
+                      try {
+                          Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+                          i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                          getContext().startActivity(i);
+                      } catch (Exception e) { }
+                      call.reject("perm", "perm");
+                      return;
+                  }
+                  new Thread(new Runnable() {
+                      public void run() {
+                          try {
+                              File f = new File(getContext().getCacheDir(), "update.apk");
+                              HttpURLConnection h = (HttpURLConnection) new URL(link).openConnection();
+                              h.setInstanceFollowRedirects(true);
+                              h.setConnectTimeout(20000);
+                              h.setReadTimeout(30000);
+                              int code = h.getResponseCode();
+                              if (code != 200) throw new Exception("HTTP " + code);
+                              long total = h.getContentLength();
+                              InputStream in = h.getInputStream();
+                              FileOutputStream out = new FileOutputStream(f);
+                              byte[] buf = new byte[32768];
+                              long done = 0;
+                              int last = -1, n;
+                              while ((n = in.read(buf)) > 0) {
+                                  out.write(buf, 0, n);
+                                  done += n;
+                                  int pct = total > 0 ? (int) (done * 100 / total) : 0;
+                                  if (pct != last) {
+                                      last = pct;
+                                      JSObject o = new JSObject();
+                                      o.put("pct", pct);
+                                      notifyListeners("progress", o);
+                                  }
+                              }
+                              out.close();
+                              in.close();
+                              Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+                              Intent i = new Intent(Intent.ACTION_VIEW);
+                              i.setDataAndType(uri, "application/vnd.android.package-archive");
+                              i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                              getContext().startActivity(i);
+                              call.resolve();
+                          } catch (Exception e) {
+                              call.reject(String.valueOf(e.getMessage()));
+                          }
+                      }
+                  }).start();
+              }
+
+              // ---------- mise à jour du contenu (sans réinstaller l'APK) ----------
+              private static final String PREFS = "CapWebViewSettings";
+
+              private HttpURLConnection open(String link, boolean head) throws IOException {
+                  HttpURLConnection h = (HttpURLConnection) new URL(link).openConnection();
+                  h.setInstanceFollowRedirects(true);
+                  h.setConnectTimeout(15000);
+                  h.setReadTimeout(30000);
+                  if (head) h.setRequestProperty("Range", "bytes=0-7999");
+                  return h;
+              }
+
+              private void copyAssets(AssetManager am, String from, File to) throws IOException {
+                  String[] list = am.list(from);
+                  if (list != null && list.length > 0) {
+                      to.mkdirs();
+                      for (String n : list) copyAssets(am, from + "/" + n, new File(to, n));
+                  } else {
+                      InputStream in = am.open(from);
+                      FileOutputStream out = new FileOutputStream(to);
+                      byte[] b = new byte[32768];
+                      int n;
+                      while ((n = in.read(b)) > 0) out.write(b, 0, n);
+                      out.close();
+                      in.close();
+                  }
+              }
+
+              private void rmrf(File f) {
+                  File[] l = f.listFiles();
+                  if (l != null) for (File c : l) rmrf(c);
+                  f.delete();
+              }
+
+              @PluginMethod
+              public void webUpdate(final PluginCall call) {
+                  final String link = call.getString("url");
+                  final String cur = call.getString("ver", "0");
+                  final String build = call.getString("build", "0");
+                  if (link == null) { call.reject("url manquante"); return; }
+                  new Thread(new Runnable() {
+                      public void run() {
+                          try {
+                              HttpURLConnection h = open(link, true);
+                              int code = h.getResponseCode();
+                              if (code != 200 && code != 206) throw new Exception("HTTP " + code);
+                              InputStream in = h.getInputStream();
+                              byte[] hb = new byte[8000];
+                              int got = 0, r;
+                              while (got < hb.length && (r = in.read(hb, got, hb.length - got)) > 0) got += r;
+                              h.disconnect();
+                              String head = new String(hb, 0, got, "UTF-8");
+                              Matcher mv = Pattern.compile("WEBVER:(\\d+)").matcher(head);
+                              Matcher mn = Pattern.compile("NATIVE:(\\d+)").matcher(head);
+                              if (!mv.find()) throw new Exception("version introuvable");
+                              String rv = mv.group(1);
+                              int rn = mn.find() ? Integer.parseInt(mn.group(1)) : 0;
+                              JSObject res = new JSObject();
+                              res.put("native", rn);
+                              res.put("nativeLocal", 3);
+                              res.put("ver", rv);
+                              if (Long.parseLong(rv) <= Long.parseLong(cur)) {
+                                  res.put("status", "same");
+                                  call.resolve(res);
+                                  return;
+                              }
+                              HttpURLConnection d = open(link, false);
+                              if (d.getResponseCode() != 200) throw new Exception("HTTP " + d.getResponseCode());
+                              InputStream di = d.getInputStream();
+                              ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                              byte[] buf = new byte[65536];
+                              int n;
+                              while ((n = di.read(buf)) > 0) bo.write(buf, 0, n);
+                              di.close();
+                              String html = bo.toString("UTF-8");
+                              if (html.length() < 500000 || !html.contains("WEBVER:" + rv)) throw new Exception("fichier invalide");
+                              html = html.replace("const APP_BUILD=0;", "const APP_BUILD=" + build + ";");
+                              File root = new File(getContext().getFilesDir(), "ota");
+                              File dir = new File(root, rv);
+                              rmrf(root);
+                              copyAssets(getContext().getAssets(), "public", dir);
+                              FileOutputStream fo = new FileOutputStream(new File(dir, "index.html"));
+                              fo.write(html.getBytes("UTF-8"));
+                              fo.close();
+                              SharedPreferences.Editor ed = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+                              ed.putString("serverBasePath", dir.getAbsolutePath());
+                              ed.putBoolean("ota_pending", true);
+                              ed.apply();
+                              res.put("status", "updated");
+                              call.resolve(res);
+                          } catch (Exception e) {
+                              call.reject(String.valueOf(e.getMessage()));
+                          }
+                      }
+                  }).start();
+              }
+
+              @PluginMethod
+              public void webApply(PluginCall call) {
+                  String p = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("serverBasePath", "");
+                  if (p == null || p.isEmpty() || !new File(p).exists()) { call.reject("aucune mise à jour"); return; }
+                  call.resolve();
+                  getBridge().setServerBasePath(p);
+              }
+
+              @PluginMethod
+              public void webOk(PluginCall call) {
+                  getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ota_pending", false).apply();
+                  call.resolve();
+              }
+
+              // ---------- notifications en arrière-plan (comme un SMS) ----------
+              @PluginMethod
+              public void pollSetup(PluginCall call) {
+                  Context c = getContext();
+                  SharedPreferences sp = c.getSharedPreferences(Poll.PREFS, Context.MODE_PRIVATE);
+                  SharedPreferences.Editor e = sp.edit();
+                  e.putString("project", call.getString("project", ""));
+                  e.putString("key", call.getString("key", ""));
+                  e.putString("uid", call.getString("uid", ""));
+                  e.putString("refresh", call.getString("refresh", ""));
+                  String[][] bs = {{"news", "news"}, {"teach", "teach"}, {"msg", "msg"}};
+                  for (String[] b : bs) {
+                      long v = Poll.num(call.getString(b[0], "0"));
+                      if (v > 0) e.putLong(b[1], Math.max(v, sp.getLong(b[1], -1)));
+                  }
+                  e.apply();
+                  Poll.schedule(c);
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void pollStop(PluginCall call) {
+                  Poll.cancel(getContext());
+                  getContext().getSharedPreferences(Poll.PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+                  Poll.clear(getContext());
+                  call.resolve();
+              }
+
+              @PluginMethod
+              public void clearAlerts(PluginCall call) {
+                  Poll.clear(getContext());
+                  call.resolve();
+              }
+          }
+          JAVA_EOF
+          cat > "$D/MainActivity.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  // Si la dernière mise à jour de contenu n'a pas démarré correctement, on revient à la version de l'APK
+                  SharedPreferences p = getSharedPreferences("CapWebViewSettings", Context.MODE_PRIVATE);
+                  if (p.getBoolean("ota_pending", false)) {
+                      p.edit().putString("serverBasePath", "").putBoolean("ota_pending", false).apply();
+                  }
+                  registerPlugin(ApkInstaller.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA_EOF
+          cat > "$D/Poll.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.app.AlarmManager;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.os.Build;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.util.ArrayList;
+          import java.util.List;
+          import me.leolin.shortcutbadger.ShortcutBadger;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          /** Vérifie toutes les ~15 min s'il y a du nouveau (publications, enseignements, messages) et notifie comme un SMS. */
+          public class Poll {
+              static final String PREFS = "ecel_poll";
+              static final String CH = "ecel-msg";
+              static final long EVERY = 15 * 60 * 1000L;
+
+              static PendingIntent pi(Context c) {
+                  Intent i = new Intent(c, PollReceiver.class);
+                  int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+                  return PendingIntent.getBroadcast(c, 7001, i, fl);
+              }
+
+              static void schedule(Context c) {
+                  try {
+                      AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                      long at = System.currentTimeMillis() + EVERY;
+                      PendingIntent p = pi(c);
+                      try {
+                          if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, p);
+                          else am.set(AlarmManager.RTC_WAKEUP, at, p);
+                      } catch (SecurityException e) {
+                          if (Build.VERSION.SDK_INT >= 23) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, p);
+                          else am.set(AlarmManager.RTC_WAKEUP, at, p);
+                      }
+                  } catch (Exception e) { }
+              }
+
+              static void cancel(Context c) {
+                  try {
+                      ((AlarmManager) c.getSystemService(Context.ALARM_SERVICE)).cancel(pi(c));
+                  } catch (Exception e) { }
+              }
+
+              static String http(String url, String body, String ctype, String bearer) throws Exception {
+                  HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
+                  h.setConnectTimeout(15000);
+                  h.setReadTimeout(20000);
+                  h.setRequestMethod("POST");
+                  h.setDoOutput(true);
+                  h.setRequestProperty("Content-Type", ctype);
+                  if (bearer != null && bearer.length() > 0) h.setRequestProperty("Authorization", "Bearer " + bearer);
+                  OutputStream o = h.getOutputStream();
+                  o.write(body.getBytes("UTF-8"));
+                  o.close();
+                  int code = h.getResponseCode();
+                  if (code != 200) throw new Exception("HTTP " + code);
+                  InputStream in = h.getInputStream();
+                  java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                  byte[] b = new byte[8192];
+                  int n;
+                  while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+                  in.close();
+                  return bo.toString("UTF-8");
+              }
+
+              static String fv(JSONObject f, String k) {
+                  JSONObject o = f.optJSONObject(k);
+                  if (o == null) return "";
+                  if (o.has("stringValue")) return o.optString("stringValue");
+                  if (o.has("integerValue")) return o.optString("integerValue");
+                  if (o.has("doubleValue")) return String.valueOf((long) o.optDouble("doubleValue"));
+                  return "";
+              }
+
+              static long num(String s) {
+                  try { return Long.parseLong(s.trim()); } catch (Exception e) { return 0; }
+              }
+
+              /** Retourne les documents d'une requête Firestore (REST). */
+              static List<JSONObject> query(String project, String token, String structured) throws Exception {
+                  String url = "https://firestore.googleapis.com/v1/projects/" + project + "/databases/(default)/documents:runQuery";
+                  JSONArray arr = new JSONArray(http(url, "{\"structuredQuery\":" + structured + "}", "application/json", token));
+                  List<JSONObject> out = new ArrayList<JSONObject>();
+                  for (int i = 0; i < arr.length(); i++) {
+                      JSONObject d = arr.getJSONObject(i).optJSONObject("document");
+                      if (d != null && d.optJSONObject("fields") != null) out.add(d.getJSONObject("fields"));
+                  }
+                  return out;
+              }
+
+              static String latest(String col) {
+                  return "{\"from\":[{\"collectionId\":\"" + col + "\"}],\"orderBy\":[{\"field\":{\"fieldPath\":\"id\"},\"direction\":\"DESCENDING\"}],\"limit\":5}";
+              }
+
+              static String toEq(String col, String uid) {
+                  return "{\"from\":[{\"collectionId\":\"" + col + "\"}],\"where\":{\"fieldFilter\":{\"field\":{\"fieldPath\":\"to\"},\"op\":\"EQUAL\",\"value\":{\"stringValue\":\"" + uid + "\"}}},\"limit\":50}";
+              }
+
+              static void run(Context c) {
+                  SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                  String project = sp.getString("project", "");
+                  if (project.length() == 0) return;
+                  long ln = sp.getLong("news", -1), lt = sp.getLong("teach", -1), lm = sp.getLong("msg", -1);
+                  List<String[]> out = new ArrayList<String[]>();
+                  long nn = ln, nt = lt, nm = lm;
+                  try {
+                      for (JSONObject f : query(project, null, latest("news"))) {
+                          long id = num(fv(f, "id"));
+                          if (ln >= 0 && id > ln) out.add(new String[]{"📰 Nouvelle actualité", fv(f, "title")});
+                          if (id > nn) nn = id;
+                      }
+                  } catch (Exception e) { }
+                  try {
+                      for (JSONObject f : query(project, null, latest("teachings"))) {
+                          long id = num(fv(f, "id"));
+                          if (lt >= 0 && id > lt) out.add(new String[]{"📖 Nouvel enseignement", fv(f, "title")});
+                          if (id > nt) nt = id;
+                      }
+                  } catch (Exception e) { }
+                  String uid = sp.getString("uid", ""), refresh = sp.getString("refresh", "");
+                  if (uid.length() > 0 && refresh.length() > 0) {
+                      try {
+                          String key = sp.getString("key", "");
+                          String tk = http("https://securetoken.googleapis.com/v1/token?key=" + key,
+                                  "grant_type=refresh_token&refresh_token=" + java.net.URLEncoder.encode(refresh, "UTF-8"),
+                                  "application/x-www-form-urlencoded", null);
+                          String idt = new JSONObject(tk).optString("id_token");
+                          String[] dest = new String[]{uid, "all"};
+                          for (String d : dest) {
+                              try {
+                                  for (JSONObject f : query(project, idt, toEq("messages", d))) {
+                                      long id = num(fv(f, "id"));
+                                      if (lm >= 0 && id > lm) {
+                                          String who = fv(f, "fromName");
+                                          out.add(new String[]{"💬 " + (who.length() > 0 ? who : "Nouveau message"), fv(f, "text")});
+                                      }
+                                      if (id > nm) nm = id;
+                                  }
+                              } catch (Exception e) { }
+                          }
+                      } catch (Exception e) { }
+                  }
+                  SharedPreferences.Editor ed = sp.edit();
+                  ed.putLong("news", nn).putLong("teach", nt).putLong("msg", nm);
+                  if (out.size() > 0) {
+                      int badge = sp.getInt("badge", 0) + out.size();
+                      ed.putInt("badge", badge);
+                      ed.apply();
+                      notifyAll(c, out, badge);
+                  } else {
+                      ed.apply();
+                  }
+              }
+
+              static void notifyAll(Context c, List<String[]> out, int badge) {
+                  try {
+                      NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (Build.VERSION.SDK_INT >= 26) {
+                          NotificationChannel ch = new NotificationChannel(CH, "Messages et publications", NotificationManager.IMPORTANCE_HIGH);
+                          ch.enableVibration(true);
+                          ch.setShowBadge(true);
+                          ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                          nm.createNotificationChannel(ch);
+                      }
+                      Intent li = c.getPackageManager().getLaunchIntentForPackage(c.getPackageName());
+                      int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+                      PendingIntent open = PendingIntent.getActivity(c, 0, li, fl);
+                      int ic = c.getResources().getIdentifier("ic_stat_icon_config_sample", "drawable", c.getPackageName());
+                      if (ic == 0) ic = c.getApplicationInfo().icon;
+                      SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                      int next = sp.getInt("nid", 0);
+                      int shown = Math.min(out.size(), 4);
+                      for (int i = 0; i < shown; i++) {
+                          String[] m = out.get(i);
+                          Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CH) : new Notification.Builder(c);
+                          b.setSmallIcon(ic).setContentTitle(m[0]).setContentText(m[1])
+                                  .setStyle(new Notification.BigTextStyle().bigText(m[1]))
+                                  .setAutoCancel(true).setContentIntent(open).setNumber(badge);
+                          if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+                          nm.notify(8000 + (next % 100), b.build());
+                          next++;
+                      }
+                      if (out.size() > shown) {
+                          Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CH) : new Notification.Builder(c);
+                          b.setSmallIcon(ic).setContentTitle("Ministère ECEL").setContentText("+ " + (out.size() - shown) + " autre(s) nouveauté(s)")
+                                  .setAutoCancel(true).setContentIntent(open).setNumber(badge);
+                          if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+                          nm.notify(8000 + (next % 100), b.build());
+                          next++;
+                      }
+                      sp.edit().putInt("nid", next).apply();
+                      try { ShortcutBadger.applyCount(c, badge); } catch (Throwable t) { }
+                  } catch (Throwable t) { }
+              }
+
+              static void clear(Context c) {
+                  try {
+                      NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                      for (int i = 0; i < 100; i++) nm.cancel(8000 + i);
+                      c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("badge", 0).apply();
+                      try { ShortcutBadger.removeCount(c); } catch (Throwable t) { }
+                  } catch (Throwable t) { }
+              }
+          }
+          JAVA_EOF
+          cat > "$D/PollReceiver.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          public class PollReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(final Context c, Intent i) {
+                  final PendingResult pr = goAsync();
+                  new Thread(new Runnable() {
+                      public void run() {
+                          try { Poll.run(c); } catch (Throwable t) { }
+                          Poll.schedule(c);
+                          pr.finish();
+                      }
+                  }).start();
+              }
+          }
+          JAVA_EOF
+          cat > "$D/BootReceiver.java" <<'JAVA_EOF'
+          package ci.ecel.ministere;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          public class BootReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context c, Intent i) {
+                  if (c.getSharedPreferences(Poll.PREFS, Context.MODE_PRIVATE).getString("project", "").length() > 0) Poll.schedule(c);
+              }
+          }
+          JAVA_EOF
+          cat > android/app/src/main/res/xml/file_paths.xml <<'XML_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths xmlns:android="http://schemas.android.com/apk/res/android">
+              <cache-path name="cache" path="." />
+              <files-path name="files" path="." />
+              <external-path name="ext" path="." />
+          </paths>
+          XML_EOF
+          python3 - <<'PY'
+          p='android/app/src/main/AndroidManifest.xml'
+          s=open(p,encoding='utf-8').read()
+          r=('<receiver android:name="ci.ecel.ministere.PollReceiver" android:exported="false"/>\n'
+             '<receiver android:name="ci.ecel.ministere.BootReceiver" android:exported="true"><intent-filter>'
+             '<action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>\n')
+          if 'PollReceiver' not in s:
+              s=s.replace('</application>',r+'</application>')
+          open(p,'w',encoding='utf-8').write(s)
+          PY
+          if ! grep -q ShortcutBadger android/app/build.gradle; then
+            sed -i "/^dependencies {/a\\    implementation 'me.leolin:ShortcutBadger:1.1.22'" android/app/build.gradle
+          fi
+          grep -n "ShortcutBadger" android/app/build.gradle
+          grep -n "Receiver" android/app/src/main/AndroidManifest.xml
+          ls -R "$D"
+
+      - name: Numéro de version Android (mise à jour sans désinstaller)
+        run: |
+          G=android/app/build.gradle
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/; s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" "$G"
+          grep -n "versionCode\|versionName" "$G"
+
+      - name: Numéro de version (détection des mises à jour)
+        run: sed -i "s/const APP_BUILD=0;/const APP_BUILD=${{ github.run_number }};/" www/index.html
+
+      - name: Signature de l'application
+        run: |
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  ecel {
+                      storeFile file(System.getenv('KS_FILE'))
+                      storePassword System.getenv('KS_PASS')
+                      keyAlias 'ecel'
+                      keyPassword System.getenv('KS_PASS')
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.ecel
+                      minifyEnabled false
+                  }
+                  debug {
+                      signingConfig signingConfigs.ecel
+                  }
+              }
+          }
+          GRADLE
+
+      - name: Synchroniser et compiler
+        env:
+          KS_FILE: ${{ github.workspace }}/ecel-prod.keystore
+          KS_PASS: YcZ66rzAb46ScSr2Gq4E
+        run: |
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Renommer l'APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk Ministere-ECEL.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ministere-ECEL-apk
+          path: Ministere-ECEL.apk
+
+      - name: Publier une version téléchargeable
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Ministère ECEL ${{ github.run_number }}
+          files: Ministere-ECEL.apk
