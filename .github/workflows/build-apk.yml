@@ -485,7 +485,7 @@ jobs:
               }
 
               static String latest(String col) {
-                  return "{\"from\":[{\"collectionId\":\"" + col + "\"}],\"orderBy\":[{\"field\":{\"fieldPath\":\"id\"},\"direction\":\"DESCENDING\"}],\"limit\":5}";
+                  return "{\"from\":[{\"collectionId\":\"" + col + "\"}],\"select\":{\"fields\":[{\"fieldPath\":\"id\"},{\"fieldPath\":\"title\"}]},\"orderBy\":[{\"field\":{\"fieldPath\":\"id\"},\"direction\":\"DESCENDING\"}],\"limit\":5}";
               }
 
               static String toEq(String col, String uid) {
