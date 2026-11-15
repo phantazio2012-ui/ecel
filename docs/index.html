@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!--WEBVER:20261115125820 NATIVE:5-->
+<!--WEBVER:20261115180305 NATIVE:5-->
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
@@ -136,7 +136,7 @@ details.acc.sm{margin:6px 0;border-left-width:3px}details.acc.sm>summary{padding
 /* ================= Base : dates, préférences, langues ================= */
 /* ===== Configuration Firebase : collez ici votre firebaseConfig (console Firebase > Paramètres du projet > Vos applications) ===== */
 const FIREBASE_CONFIG={apiKey:"AIzaSyAWhiDHLdaQ1NYjq9k6Z7TtJ0mkJNbery0",authDomain:"minitere-ecel.firebaseapp.com",projectId:"minitere-ecel",storageBucket:"minitere-ecel.firebasestorage.app",messagingSenderId:"474003875066",appId:"1:474003875066:web:826da669821dd391955543"};
-const WEB_VER='20261115125820',NATIVE_VER=2;const APP_BUILD=0;const UPDATE_REPO='phantazio2012-ui/ecel';
+const WEB_VER='20261115180305',NATIVE_VER=2;const APP_BUILD=0;const UPDATE_REPO='phantazio2012-ui/ecel';
 const APK_LINK='https://github.com/phantazio2012-ui/ecel/releases/latest/download/Ministere-ECEL.apk';
 const shareTail=()=>'\n\n— Ministère ECEL\n📲 '+(typeof P!=='undefined'&&P.lang==='en'?'Download the app':'Téléchargez l\'application')+' : '+APK_LINK;
 let CLOUD=false,CUID=null,ADM=false;
@@ -653,9 +653,16 @@ function prayHomeCard(){
  const ph=prayPhase(),txt=ph==='m'?morningPrayer():ph==='e'?eveningPrayer():'';
  if(!txt)return prayHint();
  return `<div class="card"><div class="tag">${prayTitle(ph)}</div><div class="body">${esc(txt)}</div><button class="ghost" style="margin-top:8px" onclick="go('prayer')">${t('see_prayer')}</button></div>`}
-function morningPrayer(){const L=D.morningPrayers&&D.morningPrayers.length?D.morningPrayers:(SEED.morningPrayers||[]);return L.length?ptext(L[dayNum(dayKey())%L.length]):""}
-
-function eveningPrayer(){const L=D.prayers&&D.prayers.length?D.prayers:(SEED.prayers||[]);return L.length?ptext(L[dayNum(dayKey())%L.length]):""}
+/* prière du jour : celle écrite par l'admin pour CE jour, sinon une prière de l'application (rotation automatique) */
+function prayFor(adm,seed){
+ const key=dayKey(),A=adm||[],S=seed||[];
+ const today=A.filter(p=>p&&typeof p==='object'&&p.d===key);
+ if(today.length)return ptext(today[today.length-1]);
+ const pool=[...S,...A.filter(p=>typeof p==='string'||(p&&!p.d))];
+ return pool.length?ptext(pool[dayNum(key)%pool.length]):"";
+}
+function morningPrayer(){return prayFor(D.morningPrayers,SEED.morningPrayers)}
+function eveningPrayer(){return prayFor(D.prayers,SEED.prayers)}
 
 /* ================= Navigation & vues publiques ================= */
 let tab='home',admin=false,fmode='login';
@@ -1521,11 +1528,33 @@ function autoUpdate(){
  setTimeout(maybeRate,9000);
  try{document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(maybeRate,1500)})}catch(e){}
  try{if(NAT&&NAT.ApkInstaller&&NAT.ApkInstaller.webOk)setTimeout(()=>NAT.ApkInstaller.webOk().catch(()=>{}),4000)}catch(e){}
- if(IS_WEB||!(APP_BUILD>0))return;
+ if(IS_WEB){webWatch();return}
+ if(!(APP_BUILD>0))return;
+ /* mise à jour automatique : au démarrage, à chaque retour dans l'app, puis toutes les 30 min */
  let last=0;try{last=(JSON.parse(localStorage.getItem(UPK))||{}).t||0}catch(e){}
- if(Date.now()-last>2*3600*1000)setTimeout(()=>checkUpdate(false),6000);
- try{if(NAT&&NAT.App)NAT.App.addListener('resume',()=>{clearAlerts();checkUpdate(false)})}catch(e){}
+ if(Date.now()-last>10*60*1000)setTimeout(()=>checkUpdate(false),4000);
+ try{if(NAT&&NAT.App)NAT.App.addListener('resume',()=>{clearAlerts();let l=0;try{l=(JSON.parse(localStorage.getItem(UPK))||{}).t||0}catch(e){}if(Date.now()-l>10*60*1000)checkUpdate(false)})}catch(e){}
+ setInterval(()=>{if(!document.hidden)checkUpdate(false)},30*60*1000);
  clearAlerts();
+}
+/* version web/PWA : recharge toute seule quand une nouvelle version est en ligne */
+let WEBWATCH=0;
+function webWatch(){
+ if(WEBWATCH)return;WEBWATCH=1;
+ const chk=async()=>{
+  try{
+   const r=await fetch(location.pathname.replace(/[^\/]*$/,'')+'index.html?v='+Date.now(),{cache:'no-store'});if(!r.ok)return;
+   const t=await r.text(),m=t.match(/WEBVER:(\S+)/);
+   if(m&&m[1]!==WEB_VER&&!/20261115180305/.test(m[1])){
+    try{const g=await navigator.serviceWorker.getRegistration();if(g)await g.update()}catch(e){}
+    const a=document.activeElement;
+    if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){toast('✅ Nouvelle version disponible : elle s\'appliquera au prochain démarrage');return}
+    toast('✅ Mise à jour — rechargement…');setTimeout(()=>location.reload(),1500);
+   }
+  }catch(e){}
+ };
+ setTimeout(chk,5000);setInterval(chk,15*60*1000);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(chk,1500)});
 }
 
 /* ================= Espace administrateur (en français) ================= */
@@ -2111,7 +2140,7 @@ async function exportMembers(){
  if(await shareFile(bl,'fideles-ecel.csv','Fidèles ECEL'))return;
  const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='fideles-ecel.csv';document.body.appendChild(a);a.click();a.remove();
 }
-function addMP(){if(!val('mpt'))return;D.morningPrayers.push(val('mpt'));save();render()}
+function addMP(){if(!val('mpt'))return;D.morningPrayers.push({t:val('mpt'),d:val('mpd')||dayKey()});save();render()}
 async function setVImg(){
  const f=document.getElementById('vif').files[0];if(!f)return alert('Choisissez une image');
  try{const ref=await storeMedia('vimg'+A.vd,await compress(f,1080,'image/jpeg'));D.vimg=D.vimg||{};D.vimg[A.vd]=CLOUD?ref:true;save();renderVSec();toast('Image enregistrée ✔')}catch(e){alert("Impossible de lire cette image. Essayez une photo JPG ou PNG.")}
@@ -2183,13 +2212,13 @@ function renderAdmin(el){
   ${D.teachings.map((x,i)=>`<div class="row" style="justify-content:space-between;margin-top:8px"><span>${esc(x.title)} <span class="mut">❤️ ${(x.likes||[]).length}</span></span><span><button class="ghost" onclick="editTeach(${x.id})">✏️ Modifier</button> <button class="del" onclick="delItem('teachings',${i})">Suppr.</button></span></div>${(x.comments||[]).length?`<details><summary class="mut">Modérer les commentaires</summary>${commentsHTML(x,true,'t')}</details>`:''}`).join('')}</div>
 
  ⟦prayers⟧<div class="card"><h3>Prières du matin</h3>
-  <p class="mut">Affichées sur l'accueil et dans l'onglet Prières (une par jour, en rotation).</p>
-  <textarea id="mpt" placeholder="Nouvelle prière du matin"></textarea><button class="btn" onclick="addMP()">Ajouter</button>
-  ${D.morningPrayers.map((p,i)=>`<div class="row" style="justify-content:space-between;margin-top:8px"><span class="mut" style="flex:1">${esc(ptext(p).slice(0,60))}…</span><button class="del" onclick="delItem('morningPrayers',${i})">Suppr.</button></div>`).join('')}</div>
+  <p class="mut">Choisissez le jour où la prière sera affichée. Les jours sans prière de votre part, l'application affiche automatiquement l'une de ses prières.</p>
+  <label>📅 Jour</label><input type="date" id="mpd" value="${dayKey()}"><textarea id="mpt" placeholder="Nouvelle prière du matin"></textarea><button class="btn" onclick="addMP()">Ajouter</button>
+  ${D.morningPrayers.map((p,i)=>`<div class="row" style="justify-content:space-between;margin-top:8px"><span class="mut" style="flex:1">${p&&p.d?'📅 '+esc(p.d)+' · ':''}${esc(ptext(p).slice(0,60))}…</span><button class="del" onclick="delItem('morningPrayers',${i})">Suppr.</button></div>`).join('')}</div>
 
  <div class="card"><h3>Prières du soir (22h)</h3>
-  <textarea id="pt" placeholder="Nouvelle prière"></textarea><button class="btn" onclick="addP()">Ajouter</button>
-  ${D.prayers.map((p,i)=>`<div class="row" style="justify-content:space-between;margin-top:8px"><span class="mut" style="flex:1">${esc(ptext(p).slice(0,60))}…</span><button class="del" onclick="delItem('prayers',${i})">Suppr.</button></div>`).join('')}</div>
+  <p class="mut">Choisissez le jour ; sinon l'application affiche automatiquement l'une de ses prières.</p><label>📅 Jour</label><input type="date" id="pd" value="${dayKey()}"><textarea id="pt" placeholder="Nouvelle prière"></textarea><button class="btn" onclick="addP()">Ajouter</button>
+  ${D.prayers.map((p,i)=>`<div class="row" style="justify-content:space-between;margin-top:8px"><span class="mut" style="flex:1">${p&&p.d?'📅 '+esc(p.d)+' · ':''}${esc(ptext(p).slice(0,60))}…</span><button class="del" onclick="delItem('prayers',${i})">Suppr.</button></div>`).join('')}</div>
 
  ⟦schedule⟧<div class="card"><h3>Programme des prières</h3>
   <p class="mut">Rendez-vous récurrents affichés aux fidèles avec rappel.</p>
@@ -2277,7 +2306,7 @@ async function addT(){
   if(warn.length)alert('Publié, mais '+warn.join(' ; ')+'.');
  }catch(e){alert('Échec de la publication : '+(e&&e.message||'erreur'));if(b){b.disabled=false;b.textContent="Publier l'enseignement"}}
 }
-function addP(){if(!val('pt'))return;D.prayers.push(val('pt'));save();render()}
+function addP(){if(!val('pt'))return;D.prayers.push({t:val('pt'),d:val('pd')||dayKey()});save();render()}
 function addOP(){if(!val('opt')||!val('opb'))return alert('Titre et texte requis');D.otherPrayers.push({id:Date.now(),title:val('opt'),when:val('opw'),body:val('opb'),date:today()});save();render()}
 function addEv(){
  const ti=val('et'),days=[0,1,2,3,4,5,6].filter(i=>document.getElementById('ed'+i).checked);
