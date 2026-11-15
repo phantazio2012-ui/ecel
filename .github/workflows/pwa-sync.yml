@@ -1,0 +1,27 @@
+name: Synchroniser la version PWA
+
+on:
+  push:
+    branches: [main]
+    paths: ['www/index.html']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copier www/index.html vers docs/
+        run: |
+          mkdir -p docs
+          cp www/index.html docs/index.html
+          touch docs/.nojekyll
+      - name: Enregistrer si modifié
+        run: |
+          git config user.name "ecel-bot"
+          git config user.email "ecel-bot@users.noreply.github.com"
+          git add docs
+          git diff --cached --quiet || (git commit -m "PWA : synchronisation avec l'application" && git push)
