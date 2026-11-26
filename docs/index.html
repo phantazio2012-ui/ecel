@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!--WEBVER:20261125000037 NATIVE:5-->
+<!--WEBVER:20261125221501 NATIVE:5-->
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
@@ -138,7 +138,7 @@ details.acc.sm{margin:6px 0;border-left-width:3px}details.acc.sm>summary{padding
 /* ================= Base : dates, préférences, langues ================= */
 /* ===== Configuration Firebase : collez ici votre firebaseConfig (console Firebase > Paramètres du projet > Vos applications) ===== */
 const FIREBASE_CONFIG={apiKey:"AIzaSyAWhiDHLdaQ1NYjq9k6Z7TtJ0mkJNbery0",authDomain:"minitere-ecel.firebaseapp.com",projectId:"minitere-ecel",storageBucket:"minitere-ecel.firebasestorage.app",messagingSenderId:"474003875066",appId:"1:474003875066:web:826da669821dd391955543"};
-const WEB_VER='20261125000037',NATIVE_VER=2;const APP_BUILD=0;const UPDATE_REPO='phantazio2012-ui/ecel';
+const WEB_VER='20261125221501',NATIVE_VER=2;const APP_BUILD=0;const UPDATE_REPO='phantazio2012-ui/ecel';
 const APK_LINK='https://github.com/phantazio2012-ui/ecel/releases/latest/download/Ministere-ECEL.apk';
 const shareTail=()=>'\n\n— Ministère ECEL\n📲 '+(typeof P!=='undefined'&&P.lang==='en'?'Download the app':'Téléchargez l\'application')+' : '+APK_LINK;
 let CLOUD=false,CUID=null,ADM=false;
@@ -738,7 +738,7 @@ function renderHome(el){
   if(needs&&!BIB[ver]&&!BIB[ver==='fr'?'en':'fr']){loadBible(ver).then(()=>{if(tab==='home')render()}).catch(()=>{});}
   else{
    const r=entryText(ve.e,ver);
-   if(r){CURV=ve.e;CURSH='📖 '+quote(r.text)+' — '+r.ref;vh=`<div class="verse">${esc(quote(r.text))}</div><div class="ref">${esc(r.ref)}</div><div class="row" style="margin-top:10px">`+(needs?`<button class="ghost" onclick="openRef(CURV)">${t('read_bible')}</button><button class="ghost" onclick="toggleMarkEntry(CURV)">${allMarked(ve.e)?t('marked_one'):t('mark_one')}</button>`:'')+`<button class="ghost" onclick="homeImage()">${t('img_btn')}</button><button class="ghost" onclick="shareWA(CURSH)">📤 ${t('share')}</button></div>`}
+   if(r){CURV=ve.e;CURSH='📖 '+quote(r.text)+' — '+r.ref;vh=`<div class="verse">${esc(quote(r.text))}</div><div class="ref">${esc(r.ref)}</div><div class="row" style="margin-top:10px">`+(needs?`<button class="ghost" onclick="openRef(CURV)">${t('read_bible')}</button><button class="ghost" onclick="toggleMarkEntry(CURV)">${allMarked(ve.e)?t('marked_one'):t('mark_one')}</button>`:'')+`<button class="ghost" onclick="homeImage()">${t('img_btn')}</button><button class="ghost" onclick="shareWA(CURSH)">📤 ${t('share')}</button><button class="ghost" onclick="noteVerse()">📓 ${L2('Noter','Note')}</button></div>`}
   }
  }
  const lastT=D.teachings.slice().reverse()[0],lastN=newsList().slice().reverse()[0],nx=nextEvent();
@@ -754,7 +754,7 @@ function renderHome(el){
 }
 let TOPEN={};
 function renderTeach(el){
- el.innerHTML=`<h2>${t('teach_title')}</h2>`+(D.teachings.length?D.teachings.slice().reverse().map(x=>`<div class="card"><details ${TOPEN[x.id]?'open':''} ontoggle="TOPEN[${x.id}]=this.open"><summary>${esc(lc(x,'title'))}${newChip('t'+x.id)}</summary><div class="mut">${fd(x.date)}${x.author?' · '+esc(x.author):''}</div><div class="body">${esc(lc(x,'body'))}</div>${mediaList(x.img,x.imgs).map(r=>`<img class="media hide" data-m="${esc(r)}" alt="">`).join('')}${likeBar(x,'t')}${commentsHTML(x,false,'t')}</details></div>`).join(''):`<p class="mut">${t('teach_none')}</p>`);
+ el.innerHTML=`<h2>${t('teach_title')}</h2>`+(D.teachings.length?D.teachings.slice().reverse().map(x=>`<div class="card"><details ${TOPEN[x.id]?'open':''} ontoggle="TOPEN[${x.id}]=this.open"><summary>${esc(lc(x,'title'))}${newChip('t'+x.id)}</summary><div class="mut">${fd(x.date)}${x.author?' · '+esc(x.author):''}</div><div class="body">${esc(lc(x,'body'))}</div>${mediaList(x.img,x.imgs).map(r=>`<img class="media hide" data-m="${esc(r)}" alt="">`).join('')}${me()?`<button class="ghost" style="margin:6px 0" onclick="noteTeach(${x.id})">📓 ${L2('Noter','Note')}</button>`:''}${likeBar(x,'t')}${commentsHTML(x,false,'t')}</details></div>`).join(''):`<p class="mut">${t('teach_none')}</p>`);
 }
 /* ----- J'aime et commentaires des prières du jour (matin / soir) ----- */
 const pidOf=k=>k+dayKey();
@@ -840,6 +840,43 @@ function touchVisit(){
  const y=ymd(new Date(Date.now()-864e5));
  m.streak=(m.lastSeen===y)?(m.streak||0)+1:1;m.best=Math.max(m.best||0,m.streak);m.visits=(m.visits||0)+1;m.lastSeen=t0;save();
 }
+/* ----- Carnet de la Parole : notes privées, gardées sur l'appareil ----- */
+let NOTEED=null;const NOTEQ={q:''};
+function notesOf(){const m=me();if(!m)return [];P.notes=P.notes||{};return P.notes[m.id]=P.notes[m.id]||[]}
+function noteOpen(id,pre){
+ if(!me()){alert(L2('Connectez-vous pour utiliser votre carnet.','Sign in to use your journal.'));fmode='login';go('fid');return}
+ const n=id?notesOf().find(x=>x.id===id):null,p=n||pre||{};
+ NOTEED={id:id||null,src:p.src||'l',quote:p.quote||''};
+ openModal(`<h3>📓 ${id?L2('Modifier la note','Edit note'):L2('Nouvelle note','New note')}</h3>
+  ${p.quote?`<div class="cm mut" style="font-style:italic">${esc(p.quote)}</div>`:''}
+  <label>${L2('Référence (verset, enseignement…)','Reference (verse, teaching…)')}</label><input id="nr" value="${esc(p.ref||'')}">
+  <label>${L2('Ma note','My note')} *</label><textarea id="nx" style="min-height:140px" placeholder="${L2('Ce que Dieu vous dit, une prière, une résolution…','What God tells you, a prayer, a resolution…')}">${esc(p.text||'')}</textarea>
+  <div class="row" style="gap:8px;margin-top:10px"><button class="btn" onclick="noteSaveBtn()">${t('save')}</button><button class="ghost" onclick="closeModal()">✕</button></div>`);
+ setTimeout(()=>{const e=document.getElementById('nx');if(e)e.focus()},50);
+}
+function noteSaveBtn(){
+ const tx=(document.getElementById('nx').value||'').trim();if(!tx||!NOTEED)return alert(L2('Écrivez votre note.','Write your note.'));
+ const L=notesOf(),ref=(document.getElementById('nr').value||'').trim();
+ if(NOTEED.id){const n=L.find(x=>x.id===NOTEED.id);if(n){n.text=tx;n.ref=ref;n.edited=today()}}
+ else L.push({id:Date.now(),date:today(),src:NOTEED.src,ref,quote:NOTEED.quote,text:tx});
+ savePrefs();closeModal();FOP.carnet=true;render();toast(L2('Note enregistrée dans votre carnet ✔','Note saved ✔'));
+}
+function noteDel(id){if(!confirm(L2('Supprimer cette note ?','Delete this note?')))return;const m=me();P.notes[m.id]=notesOf().filter(x=>x.id!==id);savePrefs();render()}
+function noteShare(id){const n=notesOf().find(x=>x.id===id);if(n)shareWA('📓 '+(n.ref?n.ref+'\n':'')+(n.quote?n.quote+'\n':'')+'\n'+n.text)}
+function noteVerse(){if(!CURSH)return;const s=CURSH.replace(/^📖 /,''),i=s.lastIndexOf(' — ');noteOpen(null,{src:'v',quote:i>0?s.slice(0,i):s,ref:i>0?s.slice(i+3):''})}
+function noteTeach(id){const x=D.teachings.find(y=>y.id===id);if(x)noteOpen(null,{src:'t',ref:lc(x,'title')})}
+function noteFilter(v){NOTEQ.q=v;const e=document.getElementById('nlist');if(e)e.innerHTML=carnetList()}
+function carnetList(){
+ const q=NOTEQ.q.trim().toLowerCase(),L=notesOf().slice().reverse().filter(n=>!q||(n.text+' '+(n.ref||'')+' '+(n.quote||'')).toLowerCase().includes(q));
+ if(!L.length)return `<p class="mut">${notesOf().length?L2('Aucune note ne correspond.','No matching note.'):L2('Votre carnet est vide. Touchez « Noter » sous le verset du jour ou sous un enseignement, ou écrivez une note libre.','Your journal is empty. Tap “Note” under the verse of the day or a teaching, or write a free note.')}</p>`;
+ return L.map(n=>`<div class="cm"><div class="mut">${n.src==='v'?'📖':n.src==='t'?'📜':'✍️'} ${fd(n.date)}${n.ref?' · '+esc(n.ref):''}</div>${n.quote?`<div class="mut" style="font-style:italic">${esc(n.quote)}</div>`:''}<div class="body">${esc(n.text)}</div><div class="row" style="margin-top:6px"><button class="ghost" onclick="noteOpen(${n.id})">✏️</button><button class="ghost" onclick="noteShare(${n.id})">📤</button><button class="del" onclick="noteDel(${n.id})">${L2('Suppr.','Del.')}</button></div></div>`).join('');
+}
+function carnetHTML(){
+ return `<p class="mut">${L2('Notes privées : elles restent sur cet appareil et personne d\'autre ne les voit. Vous choisissez ce que vous partagez.','Private notes: they stay on this device and nobody else sees them. You choose what to share.')}</p>
+ <div class="row" style="gap:8px"><button class="btn" onclick="noteOpen()">＋ ${L2('Nouvelle note','New note')}</button></div>
+ ${notesOf().length>4?`<input id="nq" placeholder="🔎 ${L2('Chercher dans mes notes…','Search my notes…')}" value="${esc(NOTEQ.q)}" oninput="noteFilter(this.value)" style="margin-top:8px">`:''}
+ <div id="nlist" style="margin-top:8px">${carnetList()}</div>`;
+}
 /* ----- images dans les messages ----- */
 const msgImgs=x=>mediaList(null,x.imgs).map(r=>`<img class="media hide" data-m="${esc(r)}" alt="">`).join('');
 const MSGPIC=id=>`<label>📷 ${L2('Images (facultatif, 3 max)','Images (optional, max 3)')}</label><input type="file" id="${id}" accept="image/*" multiple>`;
@@ -893,13 +930,14 @@ function renderMsg(el){
  const m=me(),st=(typeof staff==='function')?staff():null;
  let h=`<h2>✉️ ${L2('Messagerie','Messages')}</h2>`;
  if(!m&&!st){el.innerHTML=h+`<div class="card"><p class="mut">${L2('Connectez-vous à votre espace fidèle pour utiliser la messagerie.','Sign in to your member space to use messages.')}</p><button class="btn" onclick="go('fid')">${t('nav_fid')}</button></div>`;return}
- let fresh=new Set();
+ let fresh=new Set(),unseenAll=[];
  if(m){
-  const inbox=myInbox(m).filter(x=>!st||x.to==='all'),seen=m.seen||[];fresh=new Set(inbox.filter(x=>!seen.includes(x.id)).map(x=>x.id));
+  const all=myInbox(m),inbox=all.filter(x=>!st||x.to==='all'),seen=m.seen||[];fresh=new Set(inbox.filter(x=>!seen.includes(x.id)).map(x=>x.id));
+  unseenAll=all.filter(x=>!seen.includes(x.id)).map(x=>x.id);
   const sent=D.msgs.filter(x=>x.fromId===m.id).length;
   if(st)h+=`<div class="tag">${L2('Messages à tous les fidèles','Messages to all members')}</div>`;
   if(!st)h+=accD('mg_new','✏️ '+L2('Nouveau message','New message'),teamHTML(m,'form'),true);
-  h+=accD('mg_rc','📥 '+L2('Messages reçus','Received messages')+' ('+inbox.length+')'+(fresh.size?' 🔴':''),inbox.length?inbox.map(x=>`<div class="card ${fresh.has(x.id)?'unread':''}"><div class="tag">${esc(t('msg_from',x.fromName+(x.fromRole?' ('+x.fromRole+')':'')))}${x.to==='all'?'<span class="chip">★</span>':''}${fresh.has(x.id)?'<span class="chip">NEW</span>':''}</div><div class="body">${esc(x.text)}</div>${msgImgs(x)}<div class="mut">${esc(x.date)}</div>${String(x.fromId)!==String(m.id)&&String(x.fromId)!==String(myStaffId())?`<button class="ghost" style="margin-top:6px" onclick="replyTo('${esc(x.fromId)}',${x.id})">↩ ${P.lang==='en'?'Reply':'Répondre'}</button>`:''}</div>`).join(''):`<p class="mut">${t('msg_none')}</p>`,fresh.size>0);
+  h+=accD('mg_rc','📥 '+L2('Messages reçus','Received messages')+' ('+inbox.length+')',inbox.length?inbox.map(x=>`<div class="card ${fresh.has(x.id)?'unread':''}"><div class="tag">${esc(t('msg_from',x.fromName+(x.fromRole?' ('+x.fromRole+')':'')))}${x.to==='all'?'<span class="chip">★</span>':''}${fresh.has(x.id)?'<span class="chip">NEW</span>':''}</div><div class="body">${esc(x.text)}</div>${msgImgs(x)}<div class="mut">${esc(x.date)}</div>${String(x.fromId)!==String(m.id)&&String(x.fromId)!==String(myStaffId())?`<button class="ghost" style="margin-top:6px" onclick="replyTo('${esc(x.fromId)}',${x.id})">↩ ${P.lang==='en'?'Reply':'Répondre'}</button>`:''}</div>`).join(''):`<p class="mut">${t('msg_none')}</p>`,fresh.size>0);
   if(!st)h+=accD('mg_sent','📤 '+L2('Messages envoyés','Sent messages')+' ('+sent+')',teamHTML(m,'sent'),false);
  }
  if(st){
@@ -908,7 +946,7 @@ function renderMsg(el){
   h+=teamMsgCard();
  }
  el.innerHTML=h;
- if(m&&fresh.size){m.seen=(m.seen||[]).concat([...fresh]);save()}
+ if(m&&unseenAll&&unseenAll.length){m.seen=(m.seen||[]).concat(unseenAll);save();try{topIcons()}catch(e){}const nb=document.getElementById('nav').querySelector('.badge');if(nb&&tab==='msg')nb.remove()}
 }
 /* ----- mes commentaires (voir, modifier, supprimer) ----- */
 let CEDIT=null;
@@ -989,6 +1027,7 @@ function renderFid(el){
   ${accD('perso','📝 '+t('personal'),infoLines(m),false)}
   ${accD('badges',t('badges_title'),stripCard(badgesHTML(m)),false)}
   <button class="btn" style="margin:8px 0" onclick="go('msg')">✉️ ${L2('Ouvrir ma messagerie','Open my messages')}${fresh.size?' 🔴 '+fresh.size:''}</button>
+  ${accD('carnet','📓 '+L2('Mon carnet de la Parole','My Word journal')+' ('+notesOf().length+')',carnetHTML(),false)}
   ${accD('mycom','💬 '+t('my_comments')+' ('+myComments(m).length+')',stripCard(myCommentsHTML(m)),false)}
   ${accD('debat','🗣️ '+L2('Débat','Debate')+' ('+KD('d').length+')',debateHTML(),false)}`;
   return;
@@ -1586,7 +1625,7 @@ function webWatch(){
   try{
    const r=await fetch(location.pathname.replace(/[^\/]*$/,'')+'index.html?v='+Date.now(),{cache:'no-store'});if(!r.ok)return;
    const t=await r.text(),m=t.match(/WEBVER:(\S+)/);
-   if(m&&m[1]!==WEB_VER&&!/20261125000037/.test(m[1])){
+   if(m&&m[1]!==WEB_VER&&!/20261125221501/.test(m[1])){
     try{const g=await navigator.serviceWorker.getRegistration();if(g)await g.update()}catch(e){}
     const a=document.activeElement;
     if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){toast('✅ Nouvelle version disponible : elle s\'appliquera au prochain démarrage');return}
